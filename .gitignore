@@ -25,6 +25,9 @@ profile.cov
 go.work
 go.work.sum
 
+# Local checkouts of plugins, SDKs, and related repositories
+/workspace/
+
 # env file
 .env
 

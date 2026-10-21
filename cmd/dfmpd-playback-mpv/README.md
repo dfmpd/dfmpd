@@ -1,12 +1,18 @@
-# External Playback — milestones A and B
+# External Playback — milestones A, B and C1
 
 `dfmpd-playback-mpv` hosts the existing mpv Adapter in a separate process.
 Core, Queue, Local Source and client IPC remain unchanged. This is an
-experimental same-repository protocol, not a published SDK or plugin manager.
+experimental protocol with an independent Playback SDK; it is not
+a plugin manager. The mpv implementation remains in this repository.
 
 ## Run
 
 From the repository root, with Go and mpv installed:
+
+The root go.mod pins `github.com/dfmpd/dfmpd-sdk` to a published commit using
+a pseudo-version. No local `replace`, go.work, or `workspace/dfmpd-sdk` checkout
+is needed. The SDK does not import any daemon package. Use `GOWORK=off` to
+validate builds independently of optional local workspace configuration.
 
 ```sh
 go build -o /tmp/dfmpd-playback-mpv ./cmd/dfmpd-playback-mpv
@@ -58,6 +64,11 @@ millisecond timestamp for this same-host PoC, rounded up by the sender. The
 plugin caps the remaining budget and does not start already-expired requests.
 This is not a remote clock synchronization or stable external-plugin contract.
 Responses echo the ID and contain exactly one of `result` and `error`.
+Within version 1, unknown JSON fields are accepted. Missing/null required fields,
+wrong types and invalid values are rejected. Optional status position/failure
+may be omitted or null; required booleans may be false and seek may be zero.
+The SDK owns these DTOs and the stdio server; the daemon retains its proxy,
+process supervision and explicit conversion to internal Playback types.
 
 | Method | Params | Successful result |
 |---|---|---|
@@ -139,8 +150,8 @@ hard real-time guarantee. Use service/cgroup supervision for stronger containmen
 
 An abruptly killed plugin may leave its private mpv socket/directory behind.
 The daemon does not scan or delete unknown runtime files. This is not a general
-plugin sandbox or crash-recovery manager; automatic restart, hot reload, SDK,
-repository split and external Source remain unimplemented.
+plugin sandbox or crash-recovery manager; automatic restart, hot reload, stable SDK
+release, mpv repository split and external Source remain unimplemented.
 
 ## Verification
 

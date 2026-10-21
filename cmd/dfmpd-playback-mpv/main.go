@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/dfmpd/dfmpd/internal/playback"
+	sdk "github.com/dfmpd/dfmpd-sdk/playback"
 	"github.com/dfmpd/dfmpd/internal/playback/mpv"
 	"github.com/dfmpd/dfmpd/internal/playback/plugin"
 )
@@ -23,7 +23,13 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	err := plugin.Serve(ctx, os.Stdin, os.Stdout, func(ctx context.Context) (playback.Adapter, error) { return mpv.Open(ctx, *executable) })
+	err := sdk.Serve(ctx, os.Stdin, os.Stdout, "dfmpd-playback-mpv", func(ctx context.Context) (sdk.Backend, error) {
+		adapter, err := mpv.Open(ctx, *executable)
+		if err != nil {
+			return nil, err
+		}
+		return plugin.NewBackend(adapter), nil
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -331,7 +331,8 @@ The daemon explicitly selects the external executable with `-playback-plugin`.
 The built-in Adapter remains the default; there is no implicit fallback from an
 external failure. This advances the M4 external-process experiment only, not
 M4's remote Source or M6's general plugin lifecycle. Independent repositories
-and SDK publication remain deferred. B adds the focused supervision below.
+and SDK publication were deferred in A; C1 below extracts the SDK. B adds
+the focused supervision below.
 See `cmd/dfmpd-playback-mpv/README.md` for the experimental wire contract,
 limits, tests and abnormal-exit cleanup limitations.
 
@@ -348,6 +349,20 @@ Production does not enable a global subreaper: orphan status reaping belongs to
 init/systemd. Daemon SIGKILL, escaped groups, uninterruptible kernel sleep and
 abandoned private socket files remain limitations, documented in the plugin
 README. No plugin restart, fallback, general manager or repository split is added.
+
+### C1 — Extract the Playback SDK communication boundary
+
+- [x] Initialize `workspace/dfmpd-sdk` as an independent Git repository and Go module `github.com/dfmpd/dfmpd-sdk`.
+- [x] Move Playback wire DTOs, version/capabilities, error codes and the stdio server into the SDK, without daemon/internal imports.
+- [x] Retain RPC proxy, process supervision and Core type conversion in the daemon; keep mpv implementation and launch flags unchanged.
+- [x] Accept unknown JSON fields within the supported version; reject missing/null required fields, invalid types and values.
+- [x] Add standalone SDK and host compatibility tests; retain external Playback integration coverage.
+
+The SDK is published at `github.com/dfmpd/dfmpd-sdk`, commit
+`c5fb69506632075147762c64d683e06b72675d6a`, pinned by pseudo-version in go.mod.
+No local `replace` or SDK checkout is needed to build/test the daemon with
+`GOWORK=off`. The optional ignored `workspace/` checkout is managed separately.
+No Source SDK, general plugin manager or mpv repository split is included.
 
 ### M4 — First remote/alternative plugin
 
@@ -400,10 +415,10 @@ Milestone numbers describe dependencies, **not promised release versions**.
 
 ## 11. Immediate next action
 
-M0/M1 remain unchanged; M2, M3 and external Playback A/B are implemented.
-The operator verified MP3 playback and CLI commands after A. Review B
-failure handling and its documented Linux/process-group limits before proceeding
-to independent repositories or SDK work.
+M0/M1 remain unchanged; M2, M3, external Playback A/B and SDK boundary C1 are implemented.
+The operator verified MP3 playback and CLI commands after A. The experimental
+SDK is now a published independent module. Next, review the C1 boundary before
+moving mpv to its own repository; preserve B's Linux/process-group guarantees.
 Navidrome and MPRIS remain future milestones; no external-plugin contract is
 frozen. Keep this document as a living plan and distinguish validated behavior
 from future ambitions.

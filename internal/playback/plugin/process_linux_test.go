@@ -21,6 +21,7 @@ import (
 	"time"
 	"unsafe"
 
+	sdk "github.com/dfmpd/dfmpd-sdk/playback"
 	"github.com/dfmpd/dfmpd/internal/playback"
 )
 
@@ -75,9 +76,9 @@ func TestTreeProcess(t *testing.T) {
 		f, _ := os.OpenFile(path+".log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		fmt.Fprintln(f, req.Method)
 		f.Close()
-		var result any = accepted{true}
+		var result any = accepted{Accepted: true}
 		if req.Method == "plugin.initialize" {
-			result = capabilities{Version, "playback", "tree", operations, []string{"local-file"}}
+			result = sdk.DefaultCapabilities("tree")
 		} else if req.Method != "plugin.shutdown" || mode == "shutdown-stall" {
 			json.NewEncoder(conn).Encode(treeEvent{"request", os.Getpid()})
 			if _, err := control.ReadBytes('\n'); err != nil {

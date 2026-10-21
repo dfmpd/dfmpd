@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	sdk "github.com/dfmpd/dfmpd-sdk/playback"
 	"github.com/dfmpd/dfmpd/internal/playback"
 )
 
@@ -88,8 +89,8 @@ func Open(ctx context.Context, executable string, args ...string) (*Proxy, error
 	go p.read()
 	go p.supervise()
 	var info capabilities
-	err = p.call(ctx, "plugin.initialize", initialization{Version}, &info, false)
-	if err == nil && !info.valid() {
+	err = p.call(ctx, "plugin.initialize", initialization{Version: Version}, &info, false)
+	if err == nil && info.Validate() != nil {
 		err = unavailable("incompatible playback plugin capabilities")
 	}
 	if err != nil {
@@ -123,11 +124,7 @@ func (p *Proxy) read() {
 			return
 		}
 		var reply response
-		var fields map[string]json.RawMessage
-		_ = json.Unmarshal(line, &fields)
-		_, hasResult := fields["result"]
-		_, hasError := fields["error"]
-		if err := decode(line, &reply); err != nil || reply.JSONRPC != "2.0" || hasResult == hasError || (reply.Result == nil) == (reply.Error == nil) {
+		if err := sdk.Decode(line, &reply); err != nil {
 			p.fail(unavailable("invalid plugin RPC response"))
 			return
 		}
@@ -136,10 +133,7 @@ func (p *Proxy) read() {
 			p.fail(unavailable("invalid plugin response ID"))
 			return
 		}
-		if reply.Error != nil && (reply.Error.Code == 0 || reply.Error.Message == "" || (reply.Error.Data != nil && !validCode(reply.Error.Data.Code))) {
-			p.fail(unavailable("invalid plugin error"))
-			return
-		}
+
 		last = id
 		select {
 		case p.replies <- reply:
@@ -178,7 +172,7 @@ func (p *Proxy) call(ctx context.Context, method string, params, result any, clo
 	}
 	id := strconv.FormatUint(p.next.Add(1), 10)
 	deadline, _ := ctx.Deadline()
-	line, err := frame(request{JSONRPC: "2.0", ID: id, Method: method, Params: data, Deadline: deadline.Add(time.Millisecond - 1).UnixMilli()})
+	line, err := sdk.Frame(request{JSONRPC: "2.0", ID: id, Method: method, Params: data, Deadline: deadline.Add(time.Millisecond - 1).UnixMilli()})
 	if err != nil {
 		return err
 	}
@@ -231,15 +225,16 @@ func (p *Proxy) call(ctx context.Context, method string, params, result any, clo
 		} // late response to an earlier timed-out call
 		if reply.Error != nil {
 			if reply.Error.Data != nil {
-				switch reply.Error.Data.Code {
+				converted := fromSDKError(reply.Error.Data)
+				switch converted.Code {
 				case playback.TimedOut, playback.Canceled, playback.Unavailable, playback.Closed:
 					p.fail(unavailable("playback backend unavailable"))
 				}
-				return reply.Error.Data
+				return converted
 			}
 			return &playback.Error{Code: playback.Rejected, Message: reply.Error.Message}
 		}
-		if err := decode(reply.Result, result); err != nil {
+		if err := sdk.Decode(reply.Result, result); err != nil {
 			p.fail(unavailable("invalid plugin result"))
 			return p.breakErr
 		}
@@ -263,7 +258,7 @@ func (p *Proxy) command(ctx context.Context, method string, params any) error {
 	return nil
 }
 func (p *Proxy) Play(ctx context.Context, in playback.Input) error {
-	return p.command(ctx, "playback.play", in)
+	return p.command(ctx, "playback.play", sdk.Input{Location: in.Location})
 }
 func (p *Proxy) Pause(ctx context.Context) error { return p.command(ctx, "playback.pause", struct{}{}) }
 func (p *Proxy) Resume(ctx context.Context) error {
@@ -274,30 +269,12 @@ func (p *Proxy) Seek(ctx context.Context, seconds float64) error {
 	if seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
 		return &playback.Error{Code: playback.InvalidInput, Message: "invalid seek seconds"}
 	}
-	return p.command(ctx, "playback.seek", struct {
-		Seconds float64 `json:"seconds"`
-	}{seconds})
+	return p.command(ctx, "playback.seek", sdk.SeekParams{Seconds: seconds})
 }
 func (p *Proxy) Status(ctx context.Context) (playback.Status, error) {
-	var s playback.Status
-	err := p.operation(ctx, "playback.status", struct{}{}, &s)
-	if err == nil {
-		switch s.State {
-		case playback.Idle, playback.Loading, playback.Playing, playback.Paused, playback.Failed:
-		default:
-			err = unavailable("invalid playback state")
-		}
-		if s.Position != nil && (*s.Position < 0 || math.IsNaN(*s.Position) || math.IsInf(*s.Position, 0)) {
-			err = unavailable("invalid playback position")
-		}
-		if s.Failure != nil && !validCode(s.Failure.Code) {
-			err = unavailable("invalid playback failure")
-		}
-		if err != nil {
-			p.fail(err)
-		}
-	}
-	return s, err
+	var wire sdk.Status
+	err := p.operation(ctx, "playback.status", struct{}{}, &wire)
+	return fromSDKStatus(wire), err
 }
 
 // Close is idempotent. Broken sessions are already being collected by supervise;

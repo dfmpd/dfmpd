@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	sdk "github.com/dfmpd/dfmpd-sdk/playback"
 	"github.com/dfmpd/dfmpd/internal/core"
 	"github.com/dfmpd/dfmpd/internal/media"
 	"github.com/dfmpd/dfmpd/internal/playback"
@@ -37,7 +38,7 @@ func (a *testAdapter) record(op string) {
 }
 func (a *testAdapter) Play(_ context.Context, in playback.Input) error {
 	if in.Location == "" {
-		return invalidParams()
+		return &playback.Error{Code: playback.InvalidInput, Message: "invalid parameters"}
 	}
 	a.record("play")
 	a.idle = false
@@ -73,11 +74,11 @@ func TestPluginProcess(t *testing.T) {
 	}
 	mode, log := args[len(args)-2], args[len(args)-1]
 	if mode == "serve" || mode == "open-error" {
-		err := Serve(context.Background(), os.Stdin, os.Stdout, func(context.Context) (playback.Adapter, error) {
+		err := sdk.Serve(context.Background(), os.Stdin, os.Stdout, "fake", func(context.Context) (sdk.Backend, error) {
 			if mode == "open-error" {
 				return nil, errors.New("backend startup failed")
 			}
-			return &testAdapter{idle: true, log: log}, nil
+			return NewBackend(&testAdapter{idle: true, log: log}), nil
 		})
 		if err != nil {
 			os.Exit(2)
@@ -105,9 +106,9 @@ func TestPluginProcess(t *testing.T) {
 		f, _ := os.OpenFile(log, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		fmt.Fprintln(f, req.Method)
 		f.Close()
-		var result any = accepted{true}
+		var result any = accepted{Accepted: true}
 		if req.Method == "plugin.initialize" {
-			c := capabilities{Version, "playback", "fake", operations, []string{"local-file"}}
+			c := sdk.DefaultCapabilities("fake")
 			switch mode {
 			case "version":
 				c.Version++
@@ -140,7 +141,37 @@ func TestPluginProcess(t *testing.T) {
 			}
 		}
 		data, _ := json.Marshal(result)
-		json.NewEncoder(os.Stdout).Encode(response{JSONRPC: "2.0", ID: req.ID, Result: data})
+		var resultFields map[string]any
+		json.Unmarshal(data, &resultFields)
+		if mode == "extended" {
+			resultFields["future"] = map[string]any{"nested": true}
+		}
+		if req.Method == "playback.status" {
+			switch mode {
+			case "missing-status":
+				delete(resultFields, "idle")
+			case "null-idle":
+				resultFields["idle"] = nil
+			case "bad-status":
+				resultFields["paused"] = "false"
+			}
+		}
+		if mode == "missing-ack" && req.Method == "playback.stop" {
+			delete(resultFields, "accepted")
+		}
+		data, _ = json.Marshal(resultFields)
+		reply := response{JSONRPC: "2.0", ID: req.ID, Result: data}
+		if mode == "backend-error" && req.Method == "playback.stop" {
+			reply.Result = nil
+			reply.Error = &sdk.RPCError{Code: -32000, Message: "rejected", Data: &sdk.Error{Code: sdk.Rejected, Message: "backend rejected stop"}}
+		}
+		wire, _ := json.Marshal(reply)
+		var envelope map[string]any
+		json.Unmarshal(wire, &envelope)
+		if mode == "extended" {
+			envelope["future"] = []any{true, nil}
+		}
+		json.NewEncoder(os.Stdout).Encode(envelope)
 		if req.Method == "plugin.shutdown" {
 			os.Exit(0)
 		}
@@ -281,4 +312,43 @@ func TestProxyShutdownDeadline(t *testing.T) {
 	default:
 		t.Fatal("unresponsive child was not reaped")
 	}
+}
+
+func TestSDKCompatibilityBoundary(t *testing.T) {
+	t.Run("extensions", func(t *testing.T) {
+		p, _ := startTestPlugin(t, "extended")
+		if err := p.Play(context.Background(), playback.Input{Location: "/test.flac"}); err != nil {
+			t.Fatal(err)
+		}
+		s, err := p.Status(context.Background())
+		if err != nil || s.State != playback.Idle || !s.Idle || s.Paused {
+			t.Fatalf("status=%+v err=%v", s, err)
+		}
+		if err := p.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, mode := range []string{"missing-status", "null-idle", "bad-status", "missing-ack"} {
+		t.Run(mode, func(t *testing.T) {
+			p, _ := startTestPlugin(t, mode)
+			var err error
+			if mode == "missing-ack" {
+				err = p.Stop(context.Background())
+			} else {
+				_, err = p.Status(context.Background())
+			}
+			if !errors.Is(err, &playback.Error{Code: playback.Unavailable}) {
+				t.Fatalf("invalid result accepted: %v", err)
+			}
+		})
+	}
+	t.Run("portable-error", func(t *testing.T) {
+		p, _ := startTestPlugin(t, "backend-error")
+		if err := p.Stop(context.Background()); !errors.Is(err, &playback.Error{Code: playback.Rejected}) {
+			t.Fatalf("conversion=%v", err)
+		}
+		if err := p.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
 }

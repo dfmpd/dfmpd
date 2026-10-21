@@ -1,4 +1,4 @@
-// Package mpv implements an experimental mpv JSON IPC probe, not a plugin API.
+// Package mpv implements the mpv playback adapter and its M0 IPC transport.
 package mpv
 
 import (
@@ -14,6 +14,10 @@ import (
 	"sync"
 	"time"
 )
+
+type commandError struct{ message string }
+
+func (e *commandError) Error() string { return "mpv: " + e.message }
 
 type response struct {
 	RequestID uint64          `json:"request_id"`
@@ -38,6 +42,7 @@ type Probe struct {
 	nextID        uint64
 	eventMu       sync.Mutex
 	playbackError string
+	loading       bool
 	closeOnce     sync.Once
 	closeErr      error
 }
@@ -105,6 +110,15 @@ func (p *Probe) read() {
 			return
 		}
 		if r.Event != "" {
+			p.eventMu.Lock()
+			switch r.Event {
+			case "start-file":
+				p.loading = true
+				p.playbackError = ""
+			case "file-loaded", "end-file":
+				p.loading = false
+			}
+			p.eventMu.Unlock()
 			if r.Event == "end-file" && r.Reason == "error" {
 				p.eventMu.Lock()
 				p.playbackError = r.FileError
@@ -118,6 +132,7 @@ func (p *Probe) read() {
 		select {
 		case p.responses <- r:
 		case <-p.done:
+			p.readErr = errors.New("mpv exited")
 			return
 		}
 	}
@@ -173,7 +188,7 @@ func (p *Probe) call(ctx context.Context, command []any, result any) error {
 			continue
 		}
 		if r.Error != "success" {
-			return fmt.Errorf("mpv: %s", r.Error)
+			return &commandError{message: r.Error}
 		}
 		if result != nil {
 			return json.Unmarshal(r.Data, result)
@@ -207,6 +222,7 @@ func (p *Probe) Stop(ctx context.Context) error { return p.call(ctx, []any{"stop
 
 // Status is a diagnostic snapshot, not authoritative daemon state.
 type Status struct {
+	Loading       bool     `json:"loading,omitempty"`
 	Idle          bool     `json:"idle"`
 	Paused        bool     `json:"paused"`
 	Position      *float64 `json:"position_seconds,omitempty"`
@@ -224,12 +240,17 @@ func (p *Probe) Status(ctx context.Context) (Status, error) {
 	if !s.Idle {
 		var position float64
 		if err := p.call(ctx, []any{"get_property", "time-pos"}, &position); err != nil {
-			return s, err
+			var command *commandError
+			if !errors.As(err, &command) || command.message != "property unavailable" {
+				return s, err
+			}
+		} else {
+			s.Position = &position
 		}
-		s.Position = &position
 	}
 	p.eventMu.Lock()
 	s.PlaybackError = p.playbackError
+	s.Loading = p.loading
 	p.eventMu.Unlock()
 	return s, nil
 }

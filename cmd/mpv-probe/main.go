@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
+	"github.com/dot-1245/dfmpd/internal/playback"
 	"github.com/dot-1245/dfmpd/internal/playback/mpv"
 )
 
@@ -29,7 +31,7 @@ func run() (err error) {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	p, err := mpv.Start(ctx, *executable)
+	p, err := mpv.Open(ctx, *executable)
 	if err != nil {
 		return err
 	}
@@ -38,10 +40,11 @@ func run() (err error) {
 			err = e
 		}
 	}()
-	if err := p.Load(ctx, flag.Arg(0)); err != nil {
+	var player playback.Adapter = p
+	if err := player.Play(ctx, playback.Input{Location: flag.Arg(0)}); err != nil {
 		return err
 	}
-	fmt.Println("Load accepted. Commands: play, pause, resume, stop, status, quit")
+	fmt.Println("Load accepted. Commands: play, pause, resume, stop, status, seek SECONDS, quit")
 	lines := make(chan string)
 	go func() {
 		defer close(lines)
@@ -65,32 +68,57 @@ func run() (err error) {
 				return nil
 			}
 			var e error
-			switch strings.TrimSpace(line) {
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+			switch fields[0] {
 			case "play":
-				e = p.Load(ctx, flag.Arg(0))
-				if e == nil {
-					e = p.SetPaused(ctx, false)
-				}
+				e = player.Play(ctx, playback.Input{Location: flag.Arg(0)})
 			case "pause":
-				e = p.SetPaused(ctx, true)
+				e = player.Pause(ctx)
 			case "resume":
-				e = p.SetPaused(ctx, false)
+				e = player.Resume(ctx)
 			case "stop":
-				e = p.Stop(ctx)
+				e = player.Stop(ctx)
 			case "status":
-				var s mpv.Status
-				s, e = p.Status(ctx)
+				var s playback.Status
+				s, e = player.Status(ctx)
 				if e != nil {
 					fmt.Fprintln(os.Stderr, e)
 					continue
 				}
 				if e == nil {
-					e = json.NewEncoder(os.Stdout).Encode(s)
+					// Keep the M0 diagnostic output shape for existing probe users.
+					output := struct {
+						Idle          bool     `json:"idle"`
+						Paused        bool     `json:"paused"`
+						Position      *float64 `json:"position_seconds,omitempty"`
+						PlaybackError string   `json:"playback_error,omitempty"`
+					}{Idle: s.Idle, Paused: s.Paused, Position: s.Position}
+					if s.Failure != nil {
+						output.PlaybackError = s.Failure.Message
+					}
+					e = json.NewEncoder(os.Stdout).Encode(output)
+				}
+			case "seek":
+				if len(fields) != 2 {
+					fmt.Fprintln(os.Stderr, "usage: seek SECONDS")
+					continue
+				}
+				var seconds float64
+				seconds, e = strconv.ParseFloat(fields[1], 64)
+				if e == nil {
+					e = player.Seek(ctx, seconds)
+				}
+				if e != nil {
+					fmt.Fprintln(os.Stderr, e)
+					continue
 				}
 			case "quit":
 				return nil
 			default:
-				fmt.Println("Commands: play, pause, resume, stop, status, quit")
+				fmt.Println("Commands: play, pause, resume, stop, status, seek SECONDS, quit")
 			}
 			if e != nil {
 				return e

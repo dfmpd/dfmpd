@@ -5,7 +5,7 @@
 >
 > Please don't mention MPD anymore. PLEASE.
 
-**Status:** Pre-implementation / design draft  
+**Status:** M0 and M1 implemented; later milestones remain design drafts\
 **Last updated:** 2026-10-21  
 **Implementation language:** Go  
 **Repository starting point:** `LICENSE`, `README.md`, `go.mod` (implementation not started)
@@ -214,22 +214,35 @@ dfmpd/
 
 ## 9. Delivery milestones
 
-### M0 — Probe mpv (no DFMPD code required)
+### M0 — Probe mpv (completed with a minimal Go probe)
 
-- [ ] Verify mpv launches idle with a private JSON IPC socket.
-- [ ] Load a known, local, legally accessible MP3 or FLAC; play/pause/seek/stop.
-- [ ] Inspect mpv events and failure behavior; document the actual fields used.
+- [x] Verify mpv launches idle with a private JSON IPC socket.
+- [x] Load a local FLAC; play/pause/resume/stop/status (operator verified).
+- Seek was explicitly deferred from M0 and is now covered by M1.
+- [x] Inspect mpv events and failure behavior; document the actual fields used.
 
 **Done when:** the mpv IPC experiment is reproducible without relying on a GUI.
 
 ### M1 — Playback adapter in Go
 
-- [ ] Minimal Go mpv controller, ideally first exercised by a Go test/demo.
-- [ ] Manage child process, socket readiness, calls/responses, events and shutdown.
-- [ ] Unit tests for command serialization and errors; small integration test if mpv exists.
-- [ ] Expose a narrow Playback interface; don't implement general plugin loading yet.
+- [x] Minimal Go mpv controller, ideally first exercised by a Go test/demo.
+- [x] Manage child process, socket readiness, calls/responses, events and shutdown.
+- [x] Unit tests for command serialization and errors; small integration test if mpv exists.
+- [x] Expose a narrow Playback interface; don't implement general plugin loading yet.
 
 **Done when:** Go can play, pause, resume, seek, stop and inspect a real file via mpv, and clean up correctly.
+
+Implementation: `internal/playback` defines the provisional internal contract;
+`internal/playback/mpv` adapts the existing M0 transport. `cmd/mpv-probe` exercises
+that contract. Absolute seek uses seconds; local input locations are a temporary
+test seam, not the final Source/Descriptor schema. No external plugin runtime
+or client IPC is implemented.
+
+Validation: existing M0 tests plus adapter command/state/error tests and real mpv
+with generated WAV/null output cover play, pause, resume, forward/backward seek,
+stop, invalid media, recovery, process exit and cleanup. M1 manual acceptance
+testing is complete: the operator verified FLAC audio output, play, stop, pause,
+resume and seek.
 
 ### M2 — Minimal daemon + client IPC
 
@@ -297,6 +310,8 @@ Milestone numbers describe dependencies, **not promised release versions**.
 
 ## 11. Immediate next action
 
-**Start M0, not a full framework implementation.** Test mpv's JSON IPC with one local audio file. Record observed events and the minimum control operations, then implement an isolated Go Playback adapter (M1). Keep `PLAN.md` as a living document; distinguish validated behavior from ambitions.
+M1 implementation and manual acceptance testing are complete. M2 will introduce the daemon
+and a separate client protocol; neither is part of M1. Keep this document as a
+living plan and distinguish validated behavior from future ambitions.
 
 *Let it rip!*

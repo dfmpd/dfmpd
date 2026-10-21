@@ -138,32 +138,7 @@ func TestRealMPVLifecycle(t *testing.T) {
 
 // A generated PCM fixture and null output exercise decoding without an audio device.
 func TestRealMPVPlayback(t *testing.T) {
-	if _, err := exec.LookPath("mpv"); err != nil {
-		t.Skip("mpv is not installed")
-	}
-	dir := t.TempDir()
-	wrapper := filepath.Join(dir, "mpv-null")
-	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexec mpv --ao=null \"$@\"\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	// Ten seconds of silent, mono 8 kHz, 16-bit PCM.
-	data := make([]byte, 44+160000)
-	copy(data, "RIFF")
-	binary.LittleEndian.PutUint32(data[4:], uint32(len(data)-8))
-	copy(data[8:], "WAVEfmt ")
-	binary.LittleEndian.PutUint32(data[16:], 16)
-	binary.LittleEndian.PutUint16(data[20:], 1)
-	binary.LittleEndian.PutUint16(data[22:], 1)
-	binary.LittleEndian.PutUint32(data[24:], 8000)
-	binary.LittleEndian.PutUint32(data[28:], 16000)
-	binary.LittleEndian.PutUint16(data[32:], 2)
-	binary.LittleEndian.PutUint16(data[34:], 16)
-	copy(data[36:], "data")
-	binary.LittleEndian.PutUint32(data[40:], 160000)
-	path := filepath.Join(dir, "audio.wav")
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		t.Fatal(err)
-	}
+	path, wrapper := audioFixture(t)
 	p, err := Start(context.Background(), wrapper)
 	if err != nil {
 		t.Fatal(err)
@@ -198,4 +173,36 @@ func TestRealMPVPlayback(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait(true, false)
+}
+
+func audioFixture(t *testing.T) (string, string) {
+	t.Helper()
+	if _, err := exec.LookPath("mpv"); err != nil {
+		t.Skip("mpv is not installed")
+	}
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "mpv-null")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexec mpv --ao=null \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	// Ten seconds of silent, mono 8 kHz, 16-bit PCM.
+	data := make([]byte, 44+160000)
+	copy(data, "RIFF")
+	binary.LittleEndian.PutUint32(data[4:], uint32(len(data)-8))
+	copy(data[8:], "WAVEfmt ")
+	binary.LittleEndian.PutUint32(data[16:], 16)
+	binary.LittleEndian.PutUint16(data[20:], 1)
+	binary.LittleEndian.PutUint16(data[22:], 1)
+	binary.LittleEndian.PutUint32(data[24:], 8000)
+	binary.LittleEndian.PutUint32(data[28:], 16000)
+	binary.LittleEndian.PutUint16(data[32:], 2)
+	binary.LittleEndian.PutUint16(data[34:], 16)
+	copy(data[36:], "data")
+	binary.LittleEndian.PutUint32(data[40:], 160000)
+	path := filepath.Join(dir, "audio.wav")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	return path, wrapper
 }

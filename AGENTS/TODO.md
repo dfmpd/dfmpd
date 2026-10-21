@@ -5,7 +5,7 @@
 >
 > Please don't mention MPD anymore. PLEASE.
 
-**Status:** M0 and M1 implemented; later milestones remain design drafts\
+**Status:** M0–M3 implemented; later milestones remain design drafts\
 **Last updated:** 2026-10-21  
 **Implementation language:** Go  
 **Repository starting point:** `LICENSE`, `README.md`, `go.mod` (implementation not started)
@@ -144,7 +144,7 @@ The devices can be built incrementally, independently of DFMPD plugin-process co
 
 ### 6.1 Near-term implementation
 
-Use idiomatic **Go interfaces inside one process** to keep source/playback boundaries clear. M2 provides a Unix-domain socket server for DFMPD control IPC; M3 adds the independent `dfmpc` client. **JSON-RPC is a leading candidate for the client protocol, not a finalized decision.** Keep protocol scope and versioning explicit when implemented. Client IPC remains separate from mpv JSON IPC and the future external-plugin protocol.
+Use idiomatic **Go interfaces inside one process** to keep source/playback boundaries clear. M2 provides a Unix-domain socket server for DFMPD control IPC; M3 adds the independent `dfmpc` client. The implemented client protocol is a restricted JSON-RPC 2.0 profile with newline-delimited JSON; batches are rejected without execution. Keep protocol scope and versioning explicit when implemented. Client IPC remains separate from mpv JSON IPC and the future external-plugin protocol.
 
 ### 6.2 Long-term implementation
 
@@ -207,7 +207,8 @@ dfmpd/
 ├── internal/
 │   ├── core/           # commands, state, queue
 │   ├── playback/       # interface + mpv adapter
-│   ├── source/         # interface; local source later
+│   ├── source/         # resolver interface + local source
+│   ├── media/          # provisional identity, descriptor and metadata
 │   └── ipc/            # client transport
 ├── PLAN.md
 ├── README.md
@@ -251,22 +252,61 @@ resume and seek.
 
 ### M2 — Daemon Core + IPC
 
-- [ ] Implement `dfmpd` as a long-running foreground process, without self-daemonization.
-- [ ] Connect Core to the existing Playback Adapter; introduce basic authoritative playback state and command routing.
-- [ ] Implement a Unix-domain socket server; choose/document the minimal DFMPD client protocol and socket lifecycle.
-- [ ] Ensure concurrent requests have deterministic state updates and clean shutdown releases owned resources.
-- [ ] Verify playback operations and status through IPC tests or a test harness; the production CLI belongs to M3.
+- [x] Implement `dfmpd` as a long-running foreground process, without self-daemonization.
+- [x] Connect Core to the existing Playback Adapter; introduce basic authoritative playback state and command routing.
+- [x] Implement a Unix-domain socket server; choose/document the minimal DFMPD client protocol and socket lifecycle.
+- [x] Ensure concurrent requests have deterministic state updates and clean shutdown releases owned resources.
+- [x] Verify playback operations and status through IPC tests or a test harness; the production CLI belongs to M3.
 
 **Done when:** a foreground `dfmpd` serves Unix-domain socket requests, controls one playback session through the existing adapter, reports shared state and shuts down cleanly. `dfmpc` and queue management are not required for M2 completion. A systemd user service is a future deployment option, not an M2 prerequisite.
 
-### M3 — CLI + Queue
+M2 implementation: `cmd/dfmpd`, `internal/core` and `internal/ipc` reuse the
+unchanged M1 adapter. Playback operations are serialized; status is fetched only
+on request, with no cache, polling or events.
+Client IPC uses newline-delimited JSON over a private XDG runtime Unix socket.
+The JSON-RPC 2.0 profile rejects entire batches without execution and is not
+fully compliant. See `cmd/dfmpd/README.md` for methods, limits and failure semantics.
 
-- [ ] Implement independent `dfmpc` playback commands and status queries over DFMPD IPC; do not start or manage `dfmpd` from the client.
-- [ ] Implement minimal Core-owned queue management and expose it through IPC and CLI: add/list/remove items and next/previous, with basic error handling.
-- [ ] Add Media Identity and initial Descriptor types; keep identities in the queue and resolve descriptors immediately before playback.
-- [ ] Implement the minimal local Source needed for this flow; prove it can be substituted without Core importing its implementation. Do not freeze the final Source/Descriptor or external-plugin schema.
+Validation covers Core serialization/cancellation, multiple IPC clients, malformed
+and oversized requests, connection limits, disconnects, real mpv operations and
+failure, and SIGINT/SIGTERM cleanup. Real mpv tests use generated WAV/null output;
+audible FLAC playback through M2 IPC remains a manual acceptance check.
+
+### M3 — CLI + Queue + Local Source
+
+- [x] Implement independent `dfmpc` playback commands and status queries over DFMPD IPC; do not start or manage `dfmpd` from the client.
+- [x] Implement minimal Core-owned queue management and expose it through IPC and CLI: add/list/remove items and next/previous, with basic error handling.
+- [x] Add Media Identity and initial Descriptor types; keep identities in the queue and resolve descriptors immediately before playback.
+- [x] Implement the minimal local Source needed for this flow; prove it can be substituted without Core importing its implementation. Do not freeze the final Source/Descriptor or external-plugin schema.
 
 **Done when:** one terminal runs `dfmpd` and another uses `dfmpc` for playback control, status and a minimal queue of local songs stored by identity and resolved before playback. The CLI does not own a separate playback session or daemon lifecycle.
+
+Implementation: `cmd/dfmpc` uses the bounded JSON-RPC client in
+`internal/ipc/client.go`. Core serializes queue and playback operations together.
+Queue entries contain a separate entry ID and Media Identity, permitting duplicate
+media. The Local Resolver validates absolute regular-file paths immediately
+before playback; only the CLI converts relative paths. Descriptor and Metadata
+remain provisional internal types, with no external-plugin wire contract.
+Descriptors are transient and never appear in queue lists or public state.
+
+Queue lists use offset/limit pagination (default 20, maximum 100), shortened as
+needed to fit the existing 64 KiB frame limit. Queue capacity is 1024 entries.
+Selection denotes the last accepted queue play, not proof of audible playback.
+A potentially executed failed/timed-out play leaves an unknown outcome and
+blocks navigation until an explicit successful play/stop resolves uncertainty.
+Resolve failure does not change current playback or the queue. Next/previous
+require a playing queue selection; paused/stopped navigation, automatic advance
+and persistence are not implemented. Selected or uncertain attempted entries
+cannot be removed; select another entry or use direct playback first.
+Existing M2 playback methods remain available; successful direct play detaches
+the selection without deleting queue entries.
+
+Validation: normal tests, race tests, vet and build pass. Tests cover duplicate
+identities, pagination including JSON expansion, resolver failures, uncertain
+timeouts, concurrent clients and coexistence with M2 playback methods.
+Real mpv tests use two generated FLAC files with null audio output and verify
+next/previous against mpv's actual loaded path. Audible M3 acceptance remains
+manual. See `cmd/dfmpc/README.md` and `cmd/dfmpd/README.md` for usage and IPC.
 
 ### Milestone mapping after the executable-role decision
 
@@ -319,7 +359,7 @@ Milestone numbers describe dependencies, **not promised release versions**.
 
 ### Tentative / to validate
 
-- Client protocol framing (JSON-RPC is a candidate), socket paths and versioning; external-plugin transport remains undecided.
+- Future client protocol evolution/versioning; the implemented socket and framing are documented in `cmd/dfmpd/README.md`. External-plugin transport remains undecided.
 - Detailed plugin ABI, manifest, schema, security model, process supervisor.
 - ConfigLang bootstrap and final configuration schema.
 - Media Descriptor schema and delivery transport.
@@ -329,10 +369,10 @@ Milestone numbers describe dependencies, **not promised release versions**.
 
 ## 11. Immediate next action
 
-M0 and M1 are complete; preserve their implementations. Next, implement M2: the
-foreground `dfmpd`, basic Core state, Playback Adapter integration and the
-Unix-domain socket server for DFMPD IPC. Defer `dfmpc` and queue management to M3.
-Keep this document as a living plan and distinguish validated behavior from
-future ambitions.
+M0/M1 remain unchanged; M2 and M3 are implemented. Review M3 and manually
+verify audible FLAC playback and queue navigation using the independent CLI.
+Navidrome and MPRIS remain future milestones; no external-plugin contract is
+frozen. Keep this document as a living plan and distinguish validated behavior
+from future ambitions.
 
 *Let it rip!*

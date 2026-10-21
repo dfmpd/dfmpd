@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dot-1245/dfmpd/internal/core"
-	"github.com/dot-1245/dfmpd/internal/playback"
+	"github.com/dfmpd/dfmpd/internal/core"
+	"github.com/dfmpd/dfmpd/internal/playback"
 )
 
 type fakePlayer struct {

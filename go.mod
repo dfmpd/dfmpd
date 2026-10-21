@@ -1,3 +1,3 @@
-module github.com/dot-1245/dfmpd
+module github.com/dfmpd/dfmpd
 
 go 1.27.2

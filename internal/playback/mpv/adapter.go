@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/dot-1245/dfmpd/internal/playback"
+	"github.com/dfmpd/dfmpd/internal/playback"
 )
 
 // Adapter wraps the M0 transport. Construction/lifecycle stay backend-specific.

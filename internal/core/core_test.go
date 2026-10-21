@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dot-1245/dfmpd/internal/playback"
+	"github.com/dfmpd/dfmpd/internal/playback"
 )
 
 type fakeAdapter struct {

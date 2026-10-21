@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dot-1245/dfmpd/internal/core"
-	"github.com/dot-1245/dfmpd/internal/playback"
-	"github.com/dot-1245/dfmpd/internal/source"
+	"github.com/dfmpd/dfmpd/internal/core"
+	"github.com/dfmpd/dfmpd/internal/playback"
+	"github.com/dfmpd/dfmpd/internal/source"
 )
 
 func startServer(t *testing.T, f playback.Adapter, sources ...map[string]source.Resolver) string {

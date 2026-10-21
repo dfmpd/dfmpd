@@ -15,10 +15,10 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/dot-1245/dfmpd/internal/core"
-	"github.com/dot-1245/dfmpd/internal/ipc"
-	"github.com/dot-1245/dfmpd/internal/media"
-	"github.com/dot-1245/dfmpd/internal/source/local"
+	"github.com/dfmpd/dfmpd/internal/core"
+	"github.com/dfmpd/dfmpd/internal/ipc"
+	"github.com/dfmpd/dfmpd/internal/media"
+	"github.com/dfmpd/dfmpd/internal/source/local"
 )
 
 func main() {

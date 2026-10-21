@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dot-1245/dfmpd/internal/core"
+	"github.com/dfmpd/dfmpd/internal/core"
 )
 
 const (

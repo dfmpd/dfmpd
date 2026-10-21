@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dot-1245/dfmpd/internal/core"
-	"github.com/dot-1245/dfmpd/internal/ipc"
-	"github.com/dot-1245/dfmpd/internal/media"
-	"github.com/dot-1245/dfmpd/internal/playback"
+	"github.com/dfmpd/dfmpd/internal/core"
+	"github.com/dfmpd/dfmpd/internal/ipc"
+	"github.com/dfmpd/dfmpd/internal/media"
+	"github.com/dfmpd/dfmpd/internal/playback"
 )
 
 func TestRealFLACQueue(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/dot-1245/dfmpd/internal/core"
-	"github.com/dot-1245/dfmpd/internal/media"
+	"github.com/dfmpd/dfmpd/internal/core"
+	"github.com/dfmpd/dfmpd/internal/media"
 )
 
 func dispatchQueue(ctx context.Context, c *core.Core, id json.RawMessage, method string, params json.RawMessage) *response {

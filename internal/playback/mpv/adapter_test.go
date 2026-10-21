@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dot-1245/dfmpd/internal/playback"
+	"github.com/dfmpd/dfmpd/internal/playback"
 )
 
 func assertCode(t *testing.T, err error, code playback.Code) {

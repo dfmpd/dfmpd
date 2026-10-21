@@ -3,7 +3,7 @@ package source
 
 import (
 	"context"
-	"github.com/dot-1245/dfmpd/internal/media"
+	"github.com/dfmpd/dfmpd/internal/media"
 )
 
 type Resolver interface {

@@ -10,11 +10,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/dot-1245/dfmpd/internal/core"
-	"github.com/dot-1245/dfmpd/internal/ipc"
-	"github.com/dot-1245/dfmpd/internal/playback/mpv"
-	"github.com/dot-1245/dfmpd/internal/source"
-	"github.com/dot-1245/dfmpd/internal/source/local"
+	"github.com/dfmpd/dfmpd/internal/core"
+	"github.com/dfmpd/dfmpd/internal/ipc"
+	"github.com/dfmpd/dfmpd/internal/playback/mpv"
+	"github.com/dfmpd/dfmpd/internal/source"
+	"github.com/dfmpd/dfmpd/internal/source/local"
 )
 
 func main() {

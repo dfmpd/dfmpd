@@ -13,8 +13,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/dot-1245/dfmpd/internal/playback"
-	"github.com/dot-1245/dfmpd/internal/playback/mpv"
+	"github.com/dfmpd/dfmpd/internal/playback"
+	"github.com/dfmpd/dfmpd/internal/playback/mpv"
 )
 
 func main() {

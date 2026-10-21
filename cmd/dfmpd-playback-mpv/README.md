@@ -1,4 +1,4 @@
-# External Playback PoC — milestone A
+# External Playback — milestones A and B
 
 `dfmpd-playback-mpv` hosts the existing mpv Adapter in a separate process.
 Core, Queue, Local Source and client IPC remain unchanged. This is an
@@ -14,6 +14,8 @@ go build -o /tmp/dfmpd ./cmd/dfmpd
 /tmp/dfmpd -playback-plugin /tmp/dfmpd-playback-mpv
 ```
 
+External Playback supervision currently requires Linux; other platforms reject
+external startup explicitly. The built-in Adapter is unchanged.
 The usual private `XDG_RUNTIME_DIR` is required by the daemon. The plugin
 executable must be an explicit absolute or relative path containing `/`;
 there is no PATH discovery, manifest or installation mechanism. `-mpv` selects
@@ -86,40 +88,73 @@ the boundary. `accepted` still means command acceptance, not audible playback.
 
 - Startup/initialization: at most 5 seconds of protocol waiting, followed by
   bounded cleanup on failure. RPC: at most 3 seconds, shortened by caller context.
-- Normal shutdown: 3 seconds, then kill the direct plugin child and wait up to
-  one further second. Close is idempotent. OS-level process creation/reaping or
-  filesystem stalls are not a hard real-time guarantee.
-- Calls are serialized; response IDs are checked. Late responses from timed-out
-  requests are discarded, never used as a later request's result. The plugin
-  executes requests sequentially, checking each deadline before execution.
-- Cancellation of a caller after transmission does not roll back the operation.
-  There is no cancel RPC in A; the receiver enforces the transmitted deadline.
-  A lost reply, cancellation or timeout can leave the outcome unknown. Core's
-  existing unknown-outcome handling is preserved, and mutations are never retried.
-- A partial/interrupted write or invalid response invalidates the session rather
-  than attempting to reconstruct/replay the request. EOF or plugin failure is
-  reported as unavailable. Queue state stays in the daemon.
-- The provided plugin terminates the session on an operation deadline/cancellation
-  error, with a bounded attempt at backend cleanup; an uncooperative adapter is
-  not reused. A late response from another compatible plugin is still handled
-  safely by the proxy. No automatic restart or state restoration is attempted.
+- Calls are serialized and IDs checked. Canceling while still waiting for the
+  call slot does not invalidate a healthy session. Once transmission begins,
+  cancellation/timeout invalidates the session and starts automatic cleanup.
+  Late or already-buffered replies cannot revive it or satisfy another request.
+- The triggering timeout/cancellation returns its context error; subsequent
+  operations report unavailable. Malformed responses, EOF, process exit and
+  backend unavailable/closed errors also retire the session. There is no retry,
+  automatic restart, state restoration or fallback to the built-in Adapter.
+- A timeout, cancellation or lost reply does not prove the mutation failed to
+  execute. Terminating the process group may stop audio, but is not a successful
+  Playback Stop acknowledgement. Core retains its queue and existing uncertainty
+  semantics. A previously accepted selection is the last acknowledged command,
+  not evidence that the backend is still alive; playback status returns an error.
+- Normal Close gives `plugin.shutdown` up to 3 seconds. Failure starts group
+  cleanup: SIGTERM, up to 1 second for the leader to exit, then SIGKILL to the
+  group, including leftover descendants even if the leader has already exited.
+  Exit observation, direct-child Wait and stream draining each have a 1-second
+  fallback bound. Repeated or concurrent Close shares the same cleanup result.
+  Automatic cleanup starts on failure even when nobody calls Close.
+- Normal shutdown still lets the plugin close/reap mpv before acknowledgement.
+  Linux `waitid(WNOWAIT)` observes plugin death independently of pipe EOF and
+  reserves the leader PID until the final group signal. Only then is the direct
+  child reaped with `cmd.Wait`. No group signal follows reaping, avoiding PGID
+  reuse races. A grandchild holding stdout open cannot hide the leader's death.
 - Local files must be accessible in the plugin's filesystem namespace with its
-  inherited user privileges. URLs, authentication, stream delivery and Source
-  process management remain deferred.
+  inherited user privileges. URLs, authentication and Source process management
+  remain deferred. The protocol version and public client IPC are unchanged.
 
-## Verification and remaining work
+## Guarantees and OS limits
 
-Tests exercise real child processes for initialization, capabilities, all six
-operations, invalid frames/IDs, process exit, late replies/no replay, shutdown
-limits, and preservation of the Core queue after a crash. Daemon integration
-runs both built-in and external paths with two generated FLAC files, verifying
-Next/Previous against mpv's loaded path, pause/resume/seek/stop, process exit and
-socket cleanup. Real tests skip when mpv/ffmpeg are absent; audio uses null
-output, so audible acceptance is still manual.
+Plugins and normally inherited descendants run in a dedicated process group.
+While the daemon is alive and permitted to signal that group, abnormal plugin
+exit, stalled RPC, invalid responses and shutdown timeouts trigger group
+termination without blocking Core indefinitely. The daemon itself is not in
+that group. No process-wide subreaper or wildcard child reaping is installed.
 
-A guarantees normal cooperative cleanup and bounded waiting in the host.
-It does not implement B's descendant-process supervision: a killed/crashed or
-uncooperative plugin may leave mpv and temporary files behind. Parent SIGKILL,
-process groups/cgroups, full crash recovery, log management and stronger process
-isolation remain follow-up work. There is no auto-restart, hot reload, SDK,
-repository split, external Source, or generic Plugin Manager.
+The daemon reaps its direct plugin child. During normal shutdown the plugin
+reaps mpv. If the plugin dies first, orphaned descendants are adopted and reaped
+by init/systemd (or the environment's subreaper); the daemon can terminate them
+but cannot `Wait` for processes that are not its children. A broken container
+PID 1 may leave zombies even after the audio process has terminated.
+
+SIGKILL of the **daemon**, machine failure, a descendant escaping the group via
+`setsid`/`setpgid`, or changed signal permissions is outside this guarantee.
+Processes in uninterruptible kernel sleep may not exit promptly even on SIGKILL;
+cleanup reports a timeout and retains a background direct-child reaper instead
+of hanging shutdown. OS process creation/signaling/filesystem stalls are not a
+hard real-time guarantee. Use service/cgroup supervision for stronger containment.
+
+An abruptly killed plugin may leave its private mpv socket/directory behind.
+The daemon does not scan or delete unknown runtime files. This is not a general
+plugin sandbox or crash-recovery manager; automatic restart, hot reload, SDK,
+repository split and external Source remain unimplemented.
+
+## Verification
+
+Tests use real child/grandchild processes and control-socket handshakes to
+establish readiness and request receipt. They cover SIGKILL, idle crash with
+inherited stdout held open, EOF, invalid responses, missing responses, late
+buffered replies/no replay, concurrent Close, and TERM-resistant descendants.
+The test process temporarily acts as a subreaper to assert and reap orphaned
+children without depending on the host/container PID 1; production does not.
+
+The existing daemon tests still run built-in and external paths with two FLAC
+files, queue navigation, pause/resume/seek/stop and normal socket cleanup.
+Additional real-mpv tests kill or SIGSTOP the plugin during WAV/null-output
+playback, verify mpv termination, and verify that daemon.info and queue.list
+continue to work while failed Stop/Status/Play remain errors. Real audio tests
+skip when required tools are absent. Automated audio output is null; the
+operator separately confirmed MP3 playback and CLI commands after A.

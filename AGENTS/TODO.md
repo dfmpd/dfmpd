@@ -5,7 +5,7 @@
 >
 > Please don't mention MPD anymore. PLEASE.
 
-**Status:** M0–M3 and external Playback PoC A implemented; later milestones remain design drafts\
+**Status:** M0–M3 and external Playback milestones A/B implemented; later milestones remain design drafts\
 **Last updated:** 2026-10-22\
 **Implementation language:** Go  
 **Repository starting point:** `LICENSE`, `README.md`, `go.mod` (implementation not started)
@@ -330,10 +330,24 @@ manual. See `cmd/dfmpc/README.md` and `cmd/dfmpd/README.md` for usage and IPC.
 The daemon explicitly selects the external executable with `-playback-plugin`.
 The built-in Adapter remains the default; there is no implicit fallback from an
 external failure. This advances the M4 external-process experiment only, not
-M4's remote Source or M6's general plugin lifecycle. B's crash/descendant
-supervision, independent repositories and SDK publication remain deferred.
+M4's remote Source or M6's general plugin lifecycle. Independent repositories
+and SDK publication remain deferred. B adds the focused supervision below.
 See `cmd/dfmpd-playback-mpv/README.md` for the experimental wire contract,
 limits, tests and abnormal-exit cleanup limitations.
+
+### External Playback B — failure handling and process cleanup
+
+- [x] Isolate the plugin in a Linux process group; observe exit independently of stdout EOF.
+- [x] Retire sessions on sent-RPC timeout/cancellation, EOF, malformed replies and backend failure; do not replay or restart.
+- [x] Automatically terminate owned groups, including remaining descendants, with bounded TERM/KILL cleanup.
+- [x] Preserve the group leader PID until final signaling, then reap the direct child; keep Close idempotent.
+- [x] Keep Core, Queue, Media Identity and public IPC unchanged; report failed Stop/Play as errors.
+- [x] Test synchronized child/grandchild faults and real mpv plugin SIGKILL/SIGSTOP with continued client IPC access.
+
+Production does not enable a global subreaper: orphan status reaping belongs to
+init/systemd. Daemon SIGKILL, escaped groups, uninterruptible kernel sleep and
+abandoned private socket files remain limitations, documented in the plugin
+README. No plugin restart, fallback, general manager or repository split is added.
 
 ### M4 — First remote/alternative plugin
 
@@ -386,9 +400,10 @@ Milestone numbers describe dependencies, **not promised release versions**.
 
 ## 11. Immediate next action
 
-M0/M1 remain unchanged; M2, M3 and external Playback PoC A are implemented.
-Review A and manually verify audible FLAC playback and queue navigation through
-the external Playback executable. Stronger lifecycle supervision belongs to B.
+M0/M1 remain unchanged; M2, M3 and external Playback A/B are implemented.
+The operator verified MP3 playback and CLI commands after A. Review B
+failure handling and its documented Linux/process-group limits before proceeding
+to independent repositories or SDK work.
 Navidrome and MPRIS remain future milestones; no external-plugin contract is
 frozen. Keep this document as a living plan and distinguish validated behavior
 from future ambitions.

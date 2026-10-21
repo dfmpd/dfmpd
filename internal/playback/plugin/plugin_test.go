@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,7 +85,7 @@ func TestPluginProcess(t *testing.T) {
 		os.Exit(0)
 	}
 	if mode == "stall-init" {
-		time.Sleep(time.Minute)
+		io.Copy(io.Discard, os.Stdin)
 		os.Exit(0)
 	}
 	r := bufio.NewReader(os.Stdin)
@@ -98,7 +99,7 @@ func TestPluginProcess(t *testing.T) {
 			os.Exit(3)
 		}
 		if mode == "stall-shutdown" && req.Method == "plugin.shutdown" {
-			time.Sleep(time.Minute)
+			io.Copy(io.Discard, os.Stdin)
 			os.Exit(0)
 		}
 		f, _ := os.OpenFile(log, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
@@ -133,10 +134,6 @@ func TestPluginProcess(t *testing.T) {
 			case "oversized":
 				fmt.Fprintln(os.Stdout, strings.Repeat("x", MaxFrame))
 				continue
-			case "delay":
-				if req.Method == "playback.play" {
-					time.Sleep(100 * time.Millisecond)
-				}
 			}
 			if req.Method == "playback.status" {
 				result = playback.Status{State: playback.Idle, Idle: true}
@@ -245,26 +242,6 @@ func TestProxyBrokenResponse(t *testing.T) {
 				t.Fatal("broken session reused")
 			}
 		})
-	}
-}
-func TestProxyLateResponseNoRetry(t *testing.T) {
-	p, log := startTestPlugin(t, "delay")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	if err := p.Play(ctx, playback.Input{Location: "/test.flac"}); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("play=%v", err)
-	}
-	// The late accepted response must not be decoded as the next status result.
-	s, err := p.Status(context.Background())
-	if err != nil || s.State != playback.Idle {
-		t.Fatalf("status=%+v err=%v", s, err)
-	}
-	if err := p.Close(); err != nil {
-		t.Fatal(err)
-	}
-	data, _ := os.ReadFile(log)
-	if strings.Count(string(data), "playback.play\n") != 1 || strings.Count(string(data), "playback.status\n") != 1 {
-		t.Fatalf("requests were replayed: %s", data)
 	}
 }
 

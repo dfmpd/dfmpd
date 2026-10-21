@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -22,20 +23,22 @@ import (
 // Proxy owns a single explicitly launched child. It never retries a request or
 // falls back to a built-in adapter. Only one call writes to the stream at a time.
 type Proxy struct {
-	cmd        *exec.Cmd
-	in, out    *os.File
-	gate       chan struct{}
-	replies    chan response
-	broken     chan struct{}
-	breakOnce  sync.Once
-	breakErr   error
-	wait       chan struct{}
-	waitErr    error
-	readerDone chan struct{}
-	next       atomic.Uint64
-	closed     atomic.Bool
-	closeOnce  sync.Once
-	closeErr   error
+	cmd         *exec.Cmd
+	in, out     *os.File
+	gate        chan struct{}
+	replies     chan response
+	broken      chan struct{}
+	breakOnce   sync.Once
+	breakErr    error
+	wait        chan struct{}
+	waitErr     error
+	readerDone  chan struct{}
+	cleanupDone chan struct{}
+	cleanupErr  error
+	next        atomic.Uint64
+	closed      atomic.Bool
+	closeOnce   sync.Once
+	closeErr    error
 }
 
 var _ playback.Adapter = (*Proxy)(nil)
@@ -66,9 +69,14 @@ func Open(ctx context.Context, executable string, args ...string) (*Proxy, error
 		return nil, err
 	}
 	defer childOut.Close()
-	p := &Proxy{in: in, out: out, gate: make(chan struct{}, 1), replies: make(chan response, 1), broken: make(chan struct{}), wait: make(chan struct{}), readerDone: make(chan struct{})}
+	p := &Proxy{in: in, out: out, gate: make(chan struct{}, 1), replies: make(chan response, 1), broken: make(chan struct{}), wait: make(chan struct{}), readerDone: make(chan struct{}), cleanupDone: make(chan struct{})}
 	p.cmd = exec.Command(path, args...)
 	p.cmd.Stdin, p.cmd.Stdout, p.cmd.Stderr = childIn, childOut, os.Stderr
+	if err := isolateProcess(p.cmd); err != nil {
+		in.Close()
+		out.Close()
+		return nil, err
+	}
 	if err := p.cmd.Start(); err != nil {
 		in.Close()
 		out.Close()
@@ -77,8 +85,8 @@ func Open(ctx context.Context, executable string, args ...string) (*Proxy, error
 	// Close the parent's copies so child exit is observable as EOF.
 	childIn.Close()
 	childOut.Close()
-	go func() { p.waitErr = p.cmd.Wait(); close(p.wait) }()
 	go p.read()
+	go p.supervise()
 	var info capabilities
 	err = p.call(ctx, "plugin.initialize", initialization{Version}, &info, false)
 	if err == nil && !info.valid() {
@@ -108,6 +116,9 @@ func (p *Proxy) read() {
 	for {
 		line, err := r.ReadSlice('\n')
 		if err != nil {
+			if err == io.EOF && p.closed.Load() {
+				return
+			}
 			p.fail(unavailable("plugin response stream closed: " + err.Error()))
 			return
 		}
@@ -139,8 +150,13 @@ func (p *Proxy) read() {
 }
 
 func (p *Proxy) call(ctx context.Context, method string, params, result any, closing bool) error {
+	if p.closed.Load() && !closing {
+		return &playback.Error{Code: playback.Closed, Message: "playback plugin is closed"}
+	}
 	select {
 	case p.gate <- struct{}{}:
+	case <-p.broken:
+		return p.breakErr
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -189,7 +205,15 @@ func (p *Proxy) call(ctx context.Context, method string, params, result any, clo
 		select {
 		case reply = <-p.replies:
 		case <-ctx.Done():
+			p.fail(unavailable("plugin RPC interrupted; outcome unknown"))
 			return ctx.Err()
+		case <-p.readerDone:
+			select {
+			case reply = <-p.replies:
+			default:
+				p.fail(unavailable("plugin response stream closed"))
+				return p.breakErr
+			}
 		case <-p.broken:
 			// The final shutdown response may precede EOF in the buffered stream.
 			select {
@@ -198,11 +222,19 @@ func (p *Proxy) call(ctx context.Context, method string, params, result any, clo
 				return p.breakErr
 			}
 		}
+		if err := ctx.Err(); err != nil {
+			p.fail(unavailable("plugin RPC interrupted; outcome unknown"))
+			return err
+		}
 		if reply.ID != id {
 			continue
 		} // late response to an earlier timed-out call
 		if reply.Error != nil {
 			if reply.Error.Data != nil {
+				switch reply.Error.Data.Code {
+				case playback.TimedOut, playback.Canceled, playback.Unavailable, playback.Closed:
+					p.fail(unavailable("playback backend unavailable"))
+				}
 				return reply.Error.Data
 			}
 			return &playback.Error{Code: playback.Rejected, Message: reply.Error.Message}
@@ -268,8 +300,8 @@ func (p *Proxy) Status(ctx context.Context) (playback.Status, error) {
 	return s, err
 }
 
-// Close bounds graceful shutdown, then kills/reaps the direct plugin child.
-// Descendant process supervision after an uncooperative crash belongs to B.
+// Close is idempotent. Broken sessions are already being collected by supervise;
+// healthy sessions first get a bounded opportunity to shut down cooperatively.
 func (p *Proxy) Close() error {
 	p.closeOnce.Do(func() {
 		p.closed.Store(true)
@@ -281,21 +313,24 @@ func (p *Proxy) Close() error {
 			err = unavailable("plugin shutdown not acknowledged")
 		}
 		p.in.Close()
+		if err != nil {
+			p.fail(unavailable("plugin shutdown failed"))
+		}
+		select {
+		case <-p.cleanupDone:
+		case <-ctx.Done():
+			if err == nil {
+				err = ctx.Err()
+			}
+			p.fail(unavailable("plugin shutdown deadline exceeded"))
+			<-p.cleanupDone // supervisor has its own finite TERM/KILL/reap budget
+		}
+		p.closeErr = errors.Join(err, p.cleanupErr)
 		select {
 		case <-p.wait:
-		case <-ctx.Done():
-			_ = p.cmd.Process.Kill()
-			select {
-			case <-p.wait:
-			case <-time.After(time.Second):
-				p.closeErr = errors.Join(err, unavailable("plugin reap deadline exceeded"))
-				p.fail(p.closeErr)
-				return
-			}
+			p.closeErr = errors.Join(p.closeErr, p.waitErr)
+		default:
 		}
-		p.fail(unavailable("plugin closed"))
-		<-p.readerDone
-		p.closeErr = errors.Join(err, p.waitErr)
 	})
 	return p.closeErr
 }

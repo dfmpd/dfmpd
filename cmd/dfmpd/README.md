@@ -3,7 +3,9 @@
 `dfmpd` is a foreground daemon with one shared Playback Adapter. It neither
 forks into the background nor installs/manages a service. Future systemd user
 service integration is separate work. M3 adds the independent `dfmpc` client,
-a Core-owned queue and a Local Source Resolver. Plugin management and event
+a Core-owned queue and a Local Source Resolver. An optional external Playback PoC is available via
+`-playback-plugin /path/to/dfmpd-playback-mpv`; see
+[its documentation](../dfmpd-playback-mpv/README.md). Plugin management and event
 subscriptions are not implemented.
 
 ## Start and stop
@@ -201,7 +203,8 @@ Successful legacy `playback.play` clears the queue selection but preserves entri
 M2 playback request/result formats remain unchanged.
 
 No queue persistence, media discovery, remote Source, metadata publication,
-external-plugin runtime or Player integrations are implemented.
+general external-plugin runtime or Player integrations are implemented.
+The optional Playback-only PoC does not change these client methods.
 M3 tests additionally cover concurrent queue clients, duplicate identities,
 bounded pagination, resolution failure and uncertain playback outcomes.
 With mpv and ffmpeg installed, two generated FLAC files exercise queue navigation

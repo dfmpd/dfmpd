@@ -5,8 +5,8 @@
 >
 > Please don't mention MPD anymore. PLEASE.
 
-**Status:** M0–M3 implemented; later milestones remain design drafts\
-**Last updated:** 2026-10-21  
+**Status:** M0–M3 and external Playback PoC A implemented; later milestones remain design drafts\
+**Last updated:** 2026-10-22\
 **Implementation language:** Go  
 **Repository starting point:** `LICENSE`, `README.md`, `go.mod` (implementation not started)
 
@@ -318,12 +318,29 @@ manual. See `cmd/dfmpc/README.md` and `cmd/dfmpd/README.md` for usage and IPC.
 | M3 Local Source, Media Identity/Descriptor and queue | Remain in M3 as the foundation for CLI + Queue; preserve late resolution and Source/Core separation. |
 | M4–M6 remote sources, additional Players and external plugins | Retain their existing scope. The future TUI is named `dfmpc-tui`; GUI and MPRIS remain independent clients. |
 
+### External Playback PoC A — before repository separation
+
+- [x] Add `cmd/dfmpd-playback-mpv` using the unchanged mpv Adapter.
+- [x] Add a daemon-side `playback.Adapter` proxy over private stdin/stdout JSON-RPC.
+- [x] Validate version, kind, required operations and local-file capability at initialization.
+- [x] Bound startup, RPC and shutdown waits; correlate unique IDs and never replay mutations.
+- [x] Keep Core, Queue, Media Identity, Local Source and public client IPC unchanged.
+- [x] Exercise real mpv/null-output FLAC playback, queue navigation and normal process cleanup.
+
+The daemon explicitly selects the external executable with `-playback-plugin`.
+The built-in Adapter remains the default; there is no implicit fallback from an
+external failure. This advances the M4 external-process experiment only, not
+M4's remote Source or M6's general plugin lifecycle. B's crash/descendant
+supervision, independent repositories and SDK publication remain deferred.
+See `cmd/dfmpd-playback-mpv/README.md` for the experimental wire contract,
+limits, tests and abnormal-exit cleanup limitations.
+
 ### M4 — First remote/alternative plugin
 
 - [ ] Navidrome/OpenSubsonic Source as the first target (depending on priorities).
 - [ ] Check descriptor expiry and authentication behavior.
 - [ ] Validate source/playback capabilities and revise data contracts before freezing them.
-- [ ] Begin external-process plugin proof of concept if interfaces are mature enough.
+- [x] Begin external-process plugin proof of concept: Playback-only milestone A above; broader lifecycle remains deferred.
 
 **Done when:** a second source uses the same queue and playback model.
 
@@ -369,8 +386,9 @@ Milestone numbers describe dependencies, **not promised release versions**.
 
 ## 11. Immediate next action
 
-M0/M1 remain unchanged; M2 and M3 are implemented. Review M3 and manually
-verify audible FLAC playback and queue navigation using the independent CLI.
+M0/M1 remain unchanged; M2, M3 and external Playback PoC A are implemented.
+Review A and manually verify audible FLAC playback and queue navigation through
+the external Playback executable. Stronger lifecycle supervision belongs to B.
 Navidrome and MPRIS remain future milestones; no external-plugin contract is
 frozen. Keep this document as a living plan and distinguish validated behavior
 from future ambitions.

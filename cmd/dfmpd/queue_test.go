@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -17,6 +21,15 @@ import (
 )
 
 func TestRealFLACQueue(t *testing.T) {
+	for _, external := range []bool{false, true} {
+		name := "builtin"
+		if external {
+			name = "external-plugin"
+		}
+		t.Run(name, func(t *testing.T) { testRealFLACQueue(t, external) })
+	}
+}
+func testRealFLACQueue(t *testing.T, external bool) {
 	for _, binary := range []string{"mpv", "ffmpeg"} {
 		if _, err := exec.LookPath(binary); err != nil {
 			t.Skip(binary + " not installed")
@@ -28,6 +41,18 @@ func TestRealFLACQueue(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 	t.Setenv("XDG_RUNTIME_DIR", dir)
+	pluginPath := ""
+	if external {
+		binary := filepath.Join(dir, "plugin-bin")
+		build := exec.Command("go", "build", "-race", "-o", binary, "../dfmpd-playback-mpv")
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build plugin: %v %s", err, output)
+		}
+		pluginPath = filepath.Join(dir, "plugin")
+		if err := os.WriteFile(pluginPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$$\" > \"$XDG_RUNTIME_DIR/plugin.pid\"\nexec \"$XDG_RUNTIME_DIR/plugin-bin\" \"$@\"\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	paths := []string{filepath.Join(dir, "first.flac"), filepath.Join(dir, "second.flac")}
 	for i, path := range paths {
 		frequency := "sine=frequency=440:duration=15"
@@ -40,12 +65,12 @@ func TestRealFLACQueue(t *testing.T) {
 		}
 	}
 	wrapper := filepath.Join(dir, "mpv-null")
-	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexec mpv --ao=null \"$@\"\n"), 0700); err != nil {
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nprintf '%s\\n' \"$$\" > \"$XDG_RUNTIME_DIR/mpv.pid\"\nexec mpv --ao=null \"$@\"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- run(ctx, wrapper) }()
+	go func() { done <- runWithPlugin(ctx, wrapper, pluginPath) }()
 	defer func() {
 		cancel()
 		select {
@@ -55,6 +80,28 @@ func TestRealFLACQueue(t *testing.T) {
 			}
 		case <-time.After(6 * time.Second):
 			t.Error("daemon did not shut down")
+		}
+		pidFiles := []string{"mpv.pid"}
+		if external {
+			pidFiles = append(pidFiles, "plugin.pid")
+		}
+		for _, name := range pidFiles {
+			data, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				t.Error(err)
+				continue
+			}
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err != nil {
+				t.Error(err)
+				continue
+			}
+			if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+				t.Errorf("%s process %d still exists: %v", name, pid, err)
+			}
+		}
+		if sockets, _ := filepath.Glob(filepath.Join(dir, "dfmpd-*", "ipc")); len(sockets) != 0 {
+			t.Errorf("mpv socket remains: %v", sockets)
 		}
 	}()
 	socket := filepath.Join(dir, "dfmpd", "control.sock")
@@ -140,6 +187,14 @@ func TestRealFLACQueue(t *testing.T) {
 	call("playback.pause", nil, nil)
 	if err := ipc.Call(ctx, socket, "queue.next", nil, nil); err == nil {
 		t.Fatal("paused navigation accepted")
+	}
+	call("playback.seek", map[string]float64{"seconds": 4}, nil)
+	call("playback.resume", nil, nil)
+	check(entries[0], paths[0])
+	var resumed playback.Status
+	call("playback.status", nil, &resumed)
+	if resumed.Paused || resumed.Position == nil || *resumed.Position < 3.5 {
+		t.Fatalf("resume/seek: %+v", resumed)
 	}
 	call("playback.stop", nil, nil)
 	if err := ipc.Call(ctx, socket, "queue.previous", nil, nil); err == nil {

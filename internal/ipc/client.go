@@ -51,10 +51,6 @@ func Call(ctx context.Context, socket, method string, params any, result any) (e
 			err = ctx.Err()
 		}
 	}()
-	deadline, _ := ctx.Deadline()
-	if err := conn.SetDeadline(deadline); err != nil {
-		return err
-	}
 	for len(data) > 0 {
 		n, err := conn.Write(data)
 		if err != nil {

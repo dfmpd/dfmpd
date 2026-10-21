@@ -119,9 +119,13 @@ The initial test may pass an explicit local file path straight to mpv. This is a
 
 ## 5. Clients and integrations
 
-- **CLI:** basic commands and status; initially the simplest visible proof of the daemon's control API. Proposed binary `dfmpc` (name not yet final).
-- **TUI:** separate frontend; specifics intentionally deferred.
-- **GUI-Go:** a proposed Go-based graphical frontend; UI toolkit **not decided**. Do not assume Qt/QML, LVGL, or any specific renderer is an agreed dependency.
+Provide separate executables by role rather than combining daemon and client
+roles as subcommands of one executable:
+
+- **Daemon (`dfmpd`):** owns Core, playback state, the queue and the DFMPD IPC server. Run in the foreground; do not implement self-daemonization. Future lifecycle management is intended to use a systemd user service.
+- **CLI (`dfmpc`):** an independent client for playback commands, status and queue operations over DFMPD IPC. It does not start or manage the daemon.
+- **TUI (`dfmpc-tui`):** a future independent client using the same daemon IPC; UI details remain deferred.
+- **GUI-Go:** a proposed independent Go-based graphical client; UI toolkit **not decided**. Do not assume Qt/QML, LVGL, or any specific renderer is an agreed dependency.
 - **MPRIS:** an external bridge/client (`dfmpd-mpris`) translating the shared state and operations to the Linux MPRIS D-Bus interface. It is **not a Playback engine**.
 - **KDE Connect:** a potential transport/integration for Linux PC, Pixel, and the DIY iPod/DeskThing simultaneously; the standard KDE Connect Linux daemon is a first candidate. This is **a related device project**, not a hard dependency of DFMPD Core.
 
@@ -140,7 +144,7 @@ The devices can be built incrementally, independently of DFMPD plugin-process co
 
 ### 6.1 Near-term implementation
 
-Use idiomatic **Go interfaces inside one process** to keep source/playback boundaries clear. Provide a small control IPC so an external CLI can communicate with the daemon. **JSON-RPC over a local Unix socket is a leading candidate, not a finalized decision.** Keep protocol scope and versioning explicit when implemented.
+Use idiomatic **Go interfaces inside one process** to keep source/playback boundaries clear. M2 provides a Unix-domain socket server for DFMPD control IPC; M3 adds the independent `dfmpc` client. **JSON-RPC is a leading candidate for the client protocol, not a finalized decision.** Keep protocol scope and versioning explicit when implemented. Client IPC remains separate from mpv JSON IPC and the future external-plugin protocol.
 
 ### 6.2 Long-term implementation
 
@@ -197,8 +201,9 @@ enabled = ["cli", "mpris"]
 ```text
 dfmpd/
 ├── cmd/
-│   ├── dfmpd/          # daemon entrypoint
-│   └── dfmpc/          # minimal client entrypoint (tentative name)
+│   ├── dfmpd/          # foreground daemon entrypoint (M2)
+│   ├── dfmpc/          # independent CLI client (M3)
+│   └── dfmpc-tui/      # future independent TUI client
 ├── internal/
 │   ├── core/           # commands, state, queue
 │   ├── playback/       # interface + mpv adapter
@@ -244,23 +249,34 @@ stop, invalid media, recovery, process exit and cleanup. M1 manual acceptance
 testing is complete: the operator verified FLAC audio output, play, stop, pause,
 resume and seek.
 
-### M2 — Minimal daemon + client IPC
+### M2 — Daemon Core + IPC
 
-- [ ] Introduce authoritative playback state and command routing.
-- [ ] Start `dfmpd`, connect a CLI, and control one playback session.
-- [ ] Pick/document minimal client IPC protocol and socket lifecycle.
-- [ ] Ensure concurrent client requests have deterministic state updates.
+- [ ] Implement `dfmpd` as a long-running foreground process, without self-daemonization.
+- [ ] Connect Core to the existing Playback Adapter; introduce basic authoritative playback state and command routing.
+- [ ] Implement a Unix-domain socket server; choose/document the minimal DFMPD client protocol and socket lifecycle.
+- [ ] Ensure concurrent requests have deterministic state updates and clean shutdown releases owned resources.
+- [ ] Verify playback operations and status through IPC tests or a test harness; the production CLI belongs to M3.
 
-**Done when:** one terminal runs the daemon and another terminal controls it via CLI.
+**Done when:** a foreground `dfmpd` serves Unix-domain socket requests, controls one playback session through the existing adapter, reports shared state and shuts down cleanly. `dfmpc` and queue management are not required for M2 completion. A systemd user service is a future deployment option, not an M2 prerequisite.
 
-### M3 — Source: Local + queue model
+### M3 — CLI + Queue
 
-- [ ] Add Media Identity and initial Descriptor types.
-- [ ] Implement minimal local Source and resolution on play.
-- [ ] Add a queue with next/previous and basic error handling.
-- [ ] Prove a Source can be substituted without importing its implementation into Core.
+- [ ] Implement independent `dfmpc` playback commands and status queries over DFMPD IPC; do not start or manage `dfmpd` from the client.
+- [ ] Implement minimal Core-owned queue management and expose it through IPC and CLI: add/list/remove items and next/previous, with basic error handling.
+- [ ] Add Media Identity and initial Descriptor types; keep identities in the queue and resolve descriptors immediately before playback.
+- [ ] Implement the minimal local Source needed for this flow; prove it can be substituted without Core importing its implementation. Do not freeze the final Source/Descriptor or external-plugin schema.
 
-**Done when:** multiple local songs can be queued and played by identity.
+**Done when:** one terminal runs `dfmpd` and another uses `dfmpc` for playback control, status and a minimal queue of local songs stored by identity and resolved before playback. The CLI does not own a separate playback session or daemon lifecycle.
+
+### Milestone mapping after the executable-role decision
+
+| Previous plan | Updated plan |
+|---|---|
+| M0 mpv probe / M1 Playback Adapter | Completed; preserve existing implementations. |
+| M2 daemon state, routing and client IPC | Remain in M2, now explicitly a foreground daemon with a Unix-domain socket server and Playback Adapter integration. |
+| M2 CLI and two-terminal acceptance criterion | Move to M3 with the independent `dfmpc` client. M2 is verified through IPC tests/a test harness. |
+| M3 Local Source, Media Identity/Descriptor and queue | Remain in M3 as the foundation for CLI + Queue; preserve late resolution and Source/Core separation. |
+| M4–M6 remote sources, additional Players and external plugins | Retain their existing scope. The future TUI is named `dfmpc-tui`; GUI and MPRIS remain independent clients. |
 
 ### M4 — First remote/alternative plugin
 
@@ -275,7 +291,7 @@ resume and seek.
 
 - [ ] Navidrome/LRCLIB lyrics provider(s), priority/fallback strategy.
 - [ ] `dfmpd-mpris` bridge as a separate client.
-- [ ] TUI and/or GUI depending on which device reaches prototype stage first.
+- [ ] Independent `dfmpc-tui` and/or GUI clients depending on which device reaches prototype stage first.
 
 ### M6 — Standalone plugins and device integration
 
@@ -291,6 +307,9 @@ Milestone numbers describe dependencies, **not promised release versions**.
 ### Decided / strongly established
 
 - Go language; a small authoritative daemon.
+- Separate executables: `dfmpd` for Core/state/queue/IPC, `dfmpc` for CLI and future `dfmpc-tui` for TUI; GUI/MPRIS can be independent clients.
+- `dfmpc` does not start or manage the daemon. `dfmpd` runs in the foreground without self-daemonization; future management uses a systemd user service.
+- Unix-domain sockets for the initial DFMPD client IPC transport, separate from Playback mpv JSON IPC.
 - No inherent MPD protocol compatibility.
 - Source / Playback / Lyrics / Player / ConfigLang modular categories.
 - mpv external process as first Playback backend.
@@ -300,18 +319,20 @@ Milestone numbers describe dependencies, **not promised release versions**.
 
 ### Tentative / to validate
 
-- JSON-RPC and exact sockets/transport for client/plugin IPC.
+- Client protocol framing (JSON-RPC is a candidate), socket paths and versioning; external-plugin transport remains undecided.
 - Detailed plugin ABI, manifest, schema, security model, process supervisor.
 - ConfigLang bootstrap and final configuration schema.
 - Media Descriptor schema and delivery transport.
-- Repository/package structure and binary naming.
+- Repository/package structure and names of other future binaries; `dfmpd`, `dfmpc` and `dfmpc-tui` are decided.
 - GUI technology, hardware/OS selection, and KDE Connect responsibilities.
 - Resource limits, caching, offline-first behavior and cross-platform support.
 
 ## 11. Immediate next action
 
-M1 implementation and manual acceptance testing are complete. M2 will introduce the daemon
-and a separate client protocol; neither is part of M1. Keep this document as a
-living plan and distinguish validated behavior from future ambitions.
+M0 and M1 are complete; preserve their implementations. Next, implement M2: the
+foreground `dfmpd`, basic Core state, Playback Adapter integration and the
+Unix-domain socket server for DFMPD IPC. Defer `dfmpc` and queue management to M3.
+Keep this document as a living plan and distinguish validated behavior from
+future ambitions.
 
 *Let it rip!*

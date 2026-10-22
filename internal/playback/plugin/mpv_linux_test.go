@@ -26,10 +26,15 @@ func TestRealMPVFailureRecovery(t *testing.T) {
 	if _, err := exec.LookPath("mpv"); err != nil {
 		t.Skip("mpv not installed")
 	}
-	binaryPath := filepath.Join(t.TempDir(), "dfmpd-playback-mpv")
-	build := exec.Command("go", "build", "-race", "-o", binaryPath, "../../../cmd/dfmpd-playback-mpv")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build plugin: %v %s", err, output)
+	binaryPath := os.Getenv("DFMPD_TEST_PLAYBACK_PLUGIN")
+	if binaryPath == "" {
+		binaryPath = filepath.Join(t.TempDir(), "dfmpd-playback-mpv")
+		build := exec.Command("go", "build", "-race", "-o", binaryPath, "../../../cmd/dfmpd-playback-mpv")
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build plugin: %v %s", err, output)
+		}
+	} else if !filepath.IsAbs(binaryPath) {
+		t.Fatal("DFMPD_TEST_PLAYBACK_PLUGIN must be an absolute executable path")
 	}
 	for _, mode := range []string{"plugin-killed", "plugin-stopped"} {
 		t.Run(mode, func(t *testing.T) {

@@ -1,9 +1,13 @@
-# External Playback — milestones A, B and C1
+# External Playback — milestones A, B, C1 and C2
 
 `dfmpd-playback-mpv` hosts the existing mpv Adapter in a separate process.
 Core, Queue, Local Source and client IPC remain unchanged. This is an
 experimental protocol with an independent Playback SDK; it is not
-a plugin manager. The mpv implementation remains in this repository.
+a plugin manager. C2 copies the implementation into an independent module
+[`github.com/dfmpd/dfmpd-playback-mpv`](https://github.com/dfmpd/dfmpd-playback-mpv)
+(optional local checkout under `workspace/`).
+The in-tree command and builtin adapter remain for compatibility until C3.
+Neither checkout is a build dependency of the other.
 
 ## Run
 
@@ -151,7 +155,7 @@ hard real-time guarantee. Use service/cgroup supervision for stronger containmen
 An abruptly killed plugin may leave its private mpv socket/directory behind.
 The daemon does not scan or delete unknown runtime files. This is not a general
 plugin sandbox or crash-recovery manager; automatic restart, hot reload, stable SDK
-release, mpv repository split and external Source remain unimplemented.
+release and external Source remain unimplemented.
 
 ## Verification
 
@@ -169,3 +173,23 @@ playback, verify mpv termination, and verify that daemon.info and queue.list
 continue to work while failed Stop/Status/Play remain errors. Real audio tests
 skip when required tools are absent. Automated audio output is null; the
 operator separately confirmed MP3 playback and CLI commands after A.
+
+## Independent C2 binary verification
+
+Build the independent plugin in its own checkout, then pass its absolute path
+using the existing `dfmpd -playback-plugin /path/to/dfmpd-playback-mpv` argument.
+The daemon's default and `-mpv` forwarding are unchanged.
+
+To exercise an independently built binary with the host's real-mpv tests:
+
+```sh
+GOWORK=off DFMPD_TEST_PLAYBACK_PLUGIN=/absolute/path/dfmpd-playback-mpv \
+  go test ./cmd/dfmpd ./internal/playback/plugin \
+  -run 'TestRealFLACQueue|TestRealMPVFailureRecovery' -count=1 -v
+```
+
+This opt-in test variable requires an absolute executable path. With it unset,
+tests continue to build the retained in-tree plugin; no `workspace/` checkout
+is required. The tests use null audio and verify playback/queue operations,
+normal cleanup and SIGKILL/SIGSTOP recovery. C3 will address duplicated mpv
+implementations and command/argument ownership separately.

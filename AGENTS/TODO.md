@@ -5,7 +5,7 @@
 >
 > Please don't mention MPD anymore. PLEASE.
 
-**Status:** M0–M3 and external Playback milestones A/B implemented; later milestones remain design drafts\
+**Status:** M0–M3 and external Playback milestones A/B/C1/C2 implemented; later milestones remain design drafts\
 **Last updated:** 2026-10-22\
 **Implementation language:** Go  
 **Repository starting point:** `LICENSE`, `README.md`, `go.mod` (implementation not started)
@@ -364,6 +364,20 @@ No local `replace` or SDK checkout is needed to build/test the daemon with
 `GOWORK=off`. The optional ignored `workspace/` checkout is managed separately.
 No Source SDK, general plugin manager or mpv repository split is included.
 
+### C2 — Independent mpv Playback plugin checkout
+
+- [x] Create independent module/Git checkout `workspace/dfmpd-playback-mpv` (`github.com/dfmpd/dfmpd-playback-mpv`).
+- [x] Copy the mpv adapter, local types, command and tests; convert local types to the published SDK at the plugin boundary without daemon imports or local replace.
+- [x] Preserve the parent's builtin mpv, mpv-probe, default selection and `-mpv` forwarding.
+- [x] Allow existing FLAC/cleanup integration tests to use an explicit `DFMPD_TEST_PLAYBACK_PLUGIN` binary; default tests still build the parent's retained command.
+- [x] Verify standalone parent/child copies and real mpv/null-output compatibility, normal shutdown and abnormal process recovery.
+
+The child repository is published at `github.com/dfmpd/dfmpd-playback-mpv`
+(initial commit `018c1fd1aa9597c0c1d38bc085441369286b1ee6`).
+SDK contents are unchanged. C3 must coordinate removal
+of duplicated mpv code/command, builtin retirement and daemon argument/default
+changes; none of those changes are part of C2.
+
 ### M4 — First remote/alternative plugin
 
 - [ ] Navidrome/OpenSubsonic Source as the first target (depending on priorities).
@@ -415,10 +429,11 @@ Milestone numbers describe dependencies, **not promised release versions**.
 
 ## 11. Immediate next action
 
-M0/M1 remain unchanged; M2, M3, external Playback A/B and SDK boundary C1 are implemented.
+M0/M1 remain unchanged; M2, M3, external Playback A/B, SDK boundary C1 and independent plugin C2 are implemented.
 The operator verified MP3 playback and CLI commands after A. The experimental
-SDK is now a published independent module. Next, review the C1 boundary before
-moving mpv to its own repository; preserve B's Linux/process-group guarantees.
+SDK and plugin are published independent repositories. Review C2 before C3
+removes duplicated implementations and
+changes builtin selection/arguments; preserve B's process-group guarantees.
 Navidrome and MPRIS remain future milestones; no external-plugin contract is
 frozen. Keep this document as a living plan and distinguish validated behavior
 from future ambitions.

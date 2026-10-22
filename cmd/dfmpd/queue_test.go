@@ -43,13 +43,19 @@ func testRealFLACQueue(t *testing.T, external bool) {
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 	pluginPath := ""
 	if external {
-		binary := filepath.Join(dir, "plugin-bin")
-		build := exec.Command("go", "build", "-race", "-o", binary, "../dfmpd-playback-mpv")
-		if output, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("build plugin: %v %s", err, output)
+		binary := os.Getenv("DFMPD_TEST_PLAYBACK_PLUGIN")
+		if binary == "" {
+			binary = filepath.Join(dir, "plugin-bin")
+			build := exec.Command("go", "build", "-race", "-o", binary, "../dfmpd-playback-mpv")
+			if output, err := build.CombinedOutput(); err != nil {
+				t.Fatalf("build plugin: %v %s", err, output)
+			}
+		} else if !filepath.IsAbs(binary) {
+			t.Fatal("DFMPD_TEST_PLAYBACK_PLUGIN must be an absolute executable path")
 		}
+		t.Setenv("DFMPD_TEST_PLAYBACK_PLUGIN", binary)
 		pluginPath = filepath.Join(dir, "plugin")
-		if err := os.WriteFile(pluginPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$$\" > \"$XDG_RUNTIME_DIR/plugin.pid\"\nexec \"$XDG_RUNTIME_DIR/plugin-bin\" \"$@\"\n"), 0700); err != nil {
+		if err := os.WriteFile(pluginPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$$\" > \"$XDG_RUNTIME_DIR/plugin.pid\"\nexec \"$DFMPD_TEST_PLAYBACK_PLUGIN\" \"$@\"\n"), 0700); err != nil {
 			t.Fatal(err)
 		}
 	}
